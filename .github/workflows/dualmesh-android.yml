@@ -45,10 +45,24 @@ jobs:
         with:
           path: ~/.android/debug.keystore
           key: dualmesh-android-debug-signing-v1
+      - name: Ensure stable Android debug signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.android"
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair -v -keystore "$HOME/.android/debug.keystore" \
+              -storepass android -alias androiddebugkey -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname 'CN=Android Debug,O=Android,C=US' -noprompt
+          fi
+          test -s "$HOME/.android/debug.keystore"
+          keytool -list -v -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -alias androiddebugkey | grep -E 'SHA256:|Alias name:'
       - name: Compile Android debug APK
         run: |
           flutter config --jdk-dir="$JAVA_HOME"
-          flutter build apk --debug
+          flutter build apk --debug --build-number="${{ github.run_number }}"
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
