@@ -60,9 +60,18 @@ jobs:
           keytool -list -v -keystore "$HOME/.android/debug.keystore" \
             -storepass android -alias androiddebugkey | grep -E 'SHA256:|Alias name:'
       - name: Compile Android debug APK
+        env:
+          MESH_MAPPER_API_KEY: ${{ secrets.MESH_MAPPER_API_KEY }}
         run: |
+          set -euo pipefail
           flutter config --jdk-dir="$JAVA_HOME"
-          flutter build apk --debug --build-number="${{ github.run_number }}"
+          if [ -n "$MESH_MAPPER_API_KEY" ]; then
+            echo "MeshMapper API key configured for this build."
+            flutter build apk --debug --build-number="${{ github.run_number }}" --dart-define="API_KEY=$MESH_MAPPER_API_KEY"
+          else
+            echo "::warning::MESH_MAPPER_API_KEY secret missing. Offline APK builds, but Go Online requires a valid authorized key."
+            flutter build apk --debug --build-number="${{ github.run_number }}"
+          fi
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
