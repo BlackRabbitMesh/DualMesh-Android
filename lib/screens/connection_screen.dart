@@ -1,4 +1,5 @@
 import 'dart:io' show Platform;
+import 'second_radio_screen.dart';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -142,6 +143,17 @@ class _ConnectionScreenState extends State<ConnectionScreen>
         appBar: AppBar(
           toolbarHeight: 40,
           title: const Text('Connection', style: TextStyle(fontSize: 18)),
+          actions: [
+            IconButton(
+              tooltip: 'Second BLE radio (experimental)',
+              icon: const Icon(Icons.bluetooth_connected),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const SecondRadioScreen(),
+                ),
+              ),
+            ),
+          ],
           automaticallyImplyLeading: false,
         ),
         body: _buildBody(context, appState),
