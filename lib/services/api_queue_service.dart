@@ -690,12 +690,14 @@ class ApiQueueService {
     }
 
     // Buffer RX pings by repeater (max 4 per batch)
-    if (!_rxBuffer.containsKey(repeaterId)) {
-      _rxBuffer[repeaterId] = [];
+    // Do not merge the same repeater ID heard on two radio presets.
+    final receiverBatchKey = '${sourceRadioFreq ?? radioConfigGetter?.call() ?? 'unknown'}:$repeaterId';
+    if (!_rxBuffer.containsKey(receiverBatchKey)) {
+      _rxBuffer[receiverBatchKey] = [];
     }
 
-    if (_rxBuffer[repeaterId]!.length < _maxRxPerRepeater) {
-      _rxBuffer[repeaterId]!.add(item);
+    if (_rxBuffer[receiverBatchKey]!.length < _maxRxPerRepeater) {
+      _rxBuffer[receiverBatchKey]!.add(item);
     }
 
     // Check if we should flush RX buffer
