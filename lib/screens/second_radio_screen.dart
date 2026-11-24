@@ -65,13 +65,15 @@ class SecondRadioController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _saveNow() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(_storageKey,
+        receptions.take(500).map((e) => jsonEncode(e.toJson())).toList());
+  }
+
   void _scheduleSave() {
     _saveTimer?.cancel();
-    _saveTimer = Timer(const Duration(seconds: 2), () async {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(_storageKey,
-          receptions.take(500).map((e) => jsonEncode(e.toJson())).toList());
-    });
+    _saveTimer = Timer(const Duration(seconds: 2), _saveNow);
   }
 
   Future<void> exportCsv() async {
@@ -82,7 +84,7 @@ class SecondRadioController extends ChangeNotifier {
       e.gpsAccuracy?.toString() ?? '', e.rssi.toString(), e.snr.toString(),
       e.packetType, e.rawBytes.length.toString(),
     ].map((v) => '\"${v.replaceAll('\"', '\"\"')}\"').join(',')).toList();
-    await Share.share([header, ...lines].join('\\n'), subject: 'DualMesh USA/CA RX observations CSV');
+    await Share.share([header, ...lines].join('\n'), subject: 'DualMesh USA/CA RX observations CSV');
   }
   MeshCoreConnection? _mesh;
   final List<DiscoveredDevice> devices = [];
@@ -140,6 +142,10 @@ class SecondRadioController extends ChangeNotifier {
       _rxSub = _mesh!.logRxDataStream.listen((packet) {
         receivedPacketCount++;
         final gps = _lastGps;
+        // Never associate a stale fix with a received frame.
+        final freshGps = gps != null &&
+            DateTime.now().difference(gps.timestamp).inSeconds.abs() <= 60
+            ? gps : null;
         String type = 'unknown';
         try {
           final metadata = PacketMetadata.fromRawPacket(
@@ -148,9 +154,9 @@ class SecondRadioController extends ChangeNotifier {
         } catch (_) { /* Keep undecodable frames for diagnostics. */ }
         receptions.insert(0, SecondRadioReception(
           receivedAt: DateTime.now().toUtc(),
-          latitude: gps?.latitude,
-          longitude: gps?.longitude,
-          gpsAccuracy: gps?.accuracy,
+          latitude: freshGps?.latitude,
+          longitude: freshGps?.longitude,
+          gpsAccuracy: freshGps?.accuracy,
           packetType: type,
           receiverPublicKey: _mesh?.devicePublicKey ?? 'unknown',
           frequencyConfig: _mesh?.selfInfo?.radioConfigApi ?? 'unknown',
@@ -179,6 +185,8 @@ class SecondRadioController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _saveTimer?.cancel();
+    await _saveNow();
     try {
       await _rxSub?.cancel();
       _rxSub = null;
