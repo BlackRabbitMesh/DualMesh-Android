@@ -14,6 +14,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Use Java 17 for Android Gradle
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -28,7 +33,9 @@ jobs:
           dart format lib/models/dual_radio_slot.dart lib/services/dual_radio/dual_radio_registry.dart test/services/dual_radio_registry_test.dart
           flutter test test/services/dual_radio_registry_test.dart
       - name: Compile Android debug APK
-        run: flutter build apk --debug
+        run: |
+          flutter config --jdk-dir="$JAVA_HOME"
+          flutter build apk --debug
       - name: Upload installable debug APK
         uses: actions/upload-artifact@v4
         with:
