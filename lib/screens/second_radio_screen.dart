@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import '../models/connection_state.dart';
@@ -17,6 +18,9 @@ class SecondRadioController extends ChangeNotifier {
   final BluetoothService _ble = MobileBluetoothService();
   StreamSubscription<ConnectionStatus>? _statusSub;
   StreamSubscription<DiscoveredDevice>? _scanSub;
+  StreamSubscription<({Uint8List raw, double snr, int rssi})>? _rxSub;
+  final List<SecondRadioReception> receptions = [];
+  int receivedPacketCount = 0;
   MeshCoreConnection? _mesh;
   final List<DiscoveredDevice> devices = [];
   String? error;
@@ -66,12 +70,30 @@ class SecondRadioController extends ChangeNotifier {
       await _scanSub?.cancel();
       scanning = false;
       await _ble.connect(device.id);
+      await _rxSub?.cancel();
       _mesh?.dispose();
       _mesh = MeshCoreConnection(transport: _ble);
+      receptions.clear();
+      receivedPacketCount = 0;
+      _rxSub = _mesh!.logRxDataStream.listen((packet) {
+        receivedPacketCount++;
+        receptions.insert(0, SecondRadioReception(
+          receivedAt: DateTime.now().toUtc(),
+          receiverPublicKey: _mesh?.devicePublicKey ?? 'unknown',
+          frequencyConfig: _mesh?.selfInfo?.radioConfigApi ?? 'unknown',
+          snr: packet.snr,
+          rssi: packet.rssi,
+          rawBytes: Uint8List.fromList(packet.raw),
+        ));
+        if (receptions.length > 100) receptions.removeLast();
+        notifyListeners();
+      });
       await _mesh!.connect((_) async => null);
       connectedName = _mesh!.selfInfo?.name ?? device.name;
     } catch (e) {
       error = e.toString();
+      await _rxSub?.cancel();
+      _rxSub = null;
       await _ble.disconnect();
       _mesh?.dispose();
       _mesh = null;
@@ -84,6 +106,8 @@ class SecondRadioController extends ChangeNotifier {
 
   Future<void> disconnect() async {
     try {
+      await _rxSub?.cancel();
+      _rxSub = null;
       await _ble.disconnect();
     } finally {
       _mesh?.dispose();
@@ -92,6 +116,26 @@ class SecondRadioController extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+/// Immutable, receiver-attributed raw MeshCore RX frame.
+/// Local diagnostic only: not a validated repeater observation or API upload.
+class SecondRadioReception {
+  final DateTime receivedAt;
+  final String receiverPublicKey;
+  final String frequencyConfig;
+  final double snr;
+  final int rssi;
+  final Uint8List rawBytes;
+
+  SecondRadioReception({
+    required this.receivedAt,
+    required this.receiverPublicKey,
+    required this.frequencyConfig,
+    required this.snr,
+    required this.rssi,
+    required this.rawBytes,
+  });
 }
 
 class SecondRadioScreen extends StatefulWidget {
@@ -128,8 +172,8 @@ class _SecondRadioScreenState extends State<SecondRadioScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
-            'Independent second Bluetooth connection. '
-            'Mapping and packet logging are not yet integrated.',
+            'Independent second Bluetooth connection. Raw RX diagnostics '
+            'are tracked by receiver; map and wardriving are not yet integrated.',
           ),
           const SizedBox(height: 16),
           Text('Status: ${controller.status.name}'),
@@ -141,6 +185,18 @@ class _SecondRadioScreenState extends State<SecondRadioScreen> {
             Text('Public key: ${controller.publicKey}'),
           if (controller.error != null)
             Text(controller.error!, style: const TextStyle(color: Colors.red)),
+          const SizedBox(height: 16),
+          Text('RX frames this connection: ${controller.receivedPacketCount}'),
+          for (final reception in controller.receptions.take(12))
+            ListTile(
+              dense: true,
+              title: Text('RSSI ${reception.rssi} dBm · SNR ${reception.snr} dB'),
+              subtitle: Text(
+                '${reception.receivedAt.toLocal()} · '
+                '${reception.rawBytes.length} bytes · '
+                '${reception.frequencyConfig}',
+              ),
+            ),
           const SizedBox(height: 16),
           if (connected)
             FilledButton(
