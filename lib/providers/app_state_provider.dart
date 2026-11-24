@@ -1817,6 +1817,32 @@ class AppStateProvider extends ChangeNotifier with WidgetsBindingObserver {
       _bluetoothAdapterState == BluetoothAdapterState.off;
   GpsStatus get gpsStatus => _gpsStatus;
   Position? get currentPosition => _currentPosition;
+
+  /// Queue a validated observation from the independent secondary receiver.
+  /// This uses the same persisted, retryable MeshMapper upload pipeline as
+  /// primary RX, but stamps the source radio's actual configuration.
+  Future<void> enqueueSecondaryRx({
+    required double latitude,
+    required double longitude,
+    required String repeaterId,
+    required double? snr,
+    required DateTime timestamp,
+    required String sourceRadioFreq,
+  }) async {
+    if (sourceRadioFreq.isEmpty || sourceRadioFreq == 'unknown') return;
+    await _apiQueueService.enqueueRx(
+      latitude: latitude,
+      longitude: longitude,
+      heardRepeats: snr == null
+          ? '$repeaterId(null)'
+          : '$repeaterId(${snr.toStringAsFixed(2)})',
+      timestamp: timestamp.millisecondsSinceEpoch ~/ 1000,
+      repeaterId: repeaterId,
+      externalAntenna: _preferences.externalAntenna,
+      sourceRadioFreq: sourceRadioFreq,
+    );
+  }
+
   ({double lat, double lon})? get lastKnownPosition => _lastKnownPosition;
 
   /// True once startup has checked storage for a saved last position, whether
