@@ -807,6 +807,57 @@ class _ConnectionScreenState extends State<ConnectionScreen>
       ),
     );
 
+    // The second BLE companion is displayed beside the primary MeshMapper
+    // connection, without replacing the independent connection pipeline.
+    final secondRadioCard = AnimatedBuilder(
+      animation: SecondRadioController.instance,
+      builder: (context, _) {
+        final second = SecondRadioController.instance;
+        final connected = second.status == ConnectionStatus.connected;
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  Icon(Icons.bluetooth, color: connected ? Colors.green : Colors.grey),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(second.connectedName ?? 'Second radio · USA/CA',
+                    style: Theme.of(context).textTheme.titleMedium)),
+                  Text(connected ? 'Connected' : second.connecting ? 'Connecting' : 'Disconnected',
+                    style: TextStyle(color: connected ? Colors.green : null)),
+                ]),
+                const SizedBox(height: 8),
+                if (second.radioConfig != null)
+                  Text('Radio: ${second.radioConfig}'),
+                if (second.publicKey != null)
+                  SelectableText('Public key: ${second.publicKey}'),
+                Text('RX frames: ${second.receivedPacketCount} · Saved: ${second.receptions.length}'),
+                if (second.error != null)
+                  Text(second.error!, style: const TextStyle(color: Colors.red)),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(child: OutlinedButton.icon(
+                    onPressed: () => Navigator.of(context).push(MaterialPageRoute<void>(
+                      builder: (_) => const SecondRadioScreen())),
+                    icon: Icon(connected ? Icons.settings_bluetooth : Icons.bluetooth_searching),
+                    label: Text(connected ? 'Details / RX log' : 'Connect second radio'),
+                  )),
+                  if (connected) ...[
+                    const SizedBox(width: 8),
+                    IconButton(tooltip: 'Disconnect second radio',
+                      onPressed: second.disconnect,
+                      icon: const Icon(Icons.bluetooth_disabled)),
+                  ],
+                ]),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
     // Compact channels card
     final channelsCard = RegionalConfigCard(
       zoneName: appState.offlineMode ? null : appState.zoneName,
@@ -826,7 +877,7 @@ class _ConnectionScreenState extends State<ConnectionScreen>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: SingleChildScrollView(child: deviceSummaryCard),
+                child: SingleChildScrollView(child: Column(children: [deviceSummaryCard, const SizedBox(height: 12), secondRadioCard])),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -845,6 +896,8 @@ class _ConnectionScreenState extends State<ConnectionScreen>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           deviceSummaryCard,
+          const SizedBox(height: 12),
+          secondRadioCard,
           const SizedBox(height: 12),
           channelsCard,
         ],
