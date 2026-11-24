@@ -7,6 +7,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:share_plus/share_plus.dart';
 import '../providers/app_state_provider.dart';
 import '../services/meshcore/packet_metadata.dart';
+import '../services/meshcore/rx_logger.dart';
+import '../services/meshcore/packet_validator.dart';
+import '../services/meshcore/channel_service.dart';
+import '../services/fix_altitude.dart';
 
 import 'package:flutter/material.dart';
 import '../models/connection_state.dart';
@@ -40,10 +44,57 @@ class SecondRadioController extends ChangeNotifier {
     _gpsProvider = provider;
     _updateGps();
     provider.addListener(_updateGps);
+    _configureWardriving();
     if (!_loaded) {
       _loaded = true;
       _restore();
     }
+  }
+
+  void _configureWardriving() {
+    final provider = _gpsProvider;
+    if (provider == null) return;
+    final channels = <int, ChannelInfo>{};
+    for (final entry in ChannelService.getAllowedChannelsForValidator().entries) {
+      channels[entry.key] = ChannelInfo(
+        channelName: entry.value.channelName,
+        key: entry.value.key,
+        hash: entry.value.hash,
+      );
+    }
+    _validator = PacketValidator(
+      allowedChannels: channels,
+      disableRssiFilter: provider.preferences.disableRssiFilter,
+    );
+    _wardriveLogger = RxLogger(
+      getGpsLocation: () {
+        final gps = _lastGps;
+        if (gps == null ||
+            DateTime.now().difference(gps.timestamp).inSeconds.abs() > 60) {
+          return null;
+        }
+        return (lat: gps.latitude, lon: gps.longitude,
+            altitude: const FixAltitude.unknown());
+      },
+      carpeaterPrefix: provider.preferences.ignoreCarpeater
+          ? provider.preferences.carpeaterPublicKey : null,
+      onObservation: (_) {
+        validatedRepeaterCount++;
+        notifyListeners();
+      },
+      onRxEntry: (entry) async {
+        final radio = _mesh?.selfInfo?.radioConfigApi;
+        if (radio == null || radio.isEmpty) return;
+        await provider.enqueueSecondaryRx(
+          latitude: entry.lat,
+          longitude: entry.lon,
+          repeaterId: entry.repeaterId,
+          snr: entry.snr,
+          timestamp: entry.timestamp,
+          sourceRadioFreq: radio,
+        );
+      },
+    )..startWardriving();
   }
 
   void _updateGps() {
@@ -87,6 +138,9 @@ class SecondRadioController extends ChangeNotifier {
     await Share.share([header, ...lines].join('\n'), subject: 'DualMesh USA/CA RX observations CSV');
   }
   MeshCoreConnection? _mesh;
+  RxLogger? _wardriveLogger;
+  PacketValidator? _validator;
+  int validatedRepeaterCount = 0;
   final List<DiscoveredDevice> devices = [];
   String? error;
   bool scanning = false;
@@ -136,12 +190,23 @@ class SecondRadioController extends ChangeNotifier {
       scanning = false;
       await _ble.connect(device.id);
       await _rxSub?.cancel();
+      await _wardriveLogger?.stopWardriving(trigger: 'radio_reconnect');
+      _configureWardriving();
       _mesh?.dispose();
       _mesh = MeshCoreConnection(transport: _ble);
       receivedPacketCount = 0;
       _rxSub = _mesh!.logRxDataStream.listen((packet) {
         receivedPacketCount++;
         final gps = _lastGps;
+        final logger = _wardriveLogger;
+        final validator = _validator;
+        if (logger != null && validator != null) {
+          try {
+            final metadata = PacketMetadata.fromRawPacket(
+              raw: packet.raw, snr: packet.snr, rssi: packet.rssi);
+            unawaited(logger.handlePacket(metadata, validator));
+          } catch (_) { /* Invalid raw frame; diagnostic capture continues. */ }
+        }
         // Never associate a stale fix with a received frame.
         final freshGps = gps != null &&
             DateTime.now().difference(gps.timestamp).inSeconds.abs() <= 60
@@ -186,6 +251,7 @@ class SecondRadioController extends ChangeNotifier {
 
   Future<void> disconnect() async {
     _saveTimer?.cancel();
+    await _wardriveLogger?.stopWardriving(trigger: 'radio_disconnect');
     await _saveNow();
     try {
       await _rxSub?.cancel();
@@ -300,6 +366,7 @@ class _SecondRadioScreenState extends State<SecondRadioScreen> {
             Text(controller.error!, style: const TextStyle(color: Colors.red)),
           const SizedBox(height: 16),
           Text('RX frames this connection: ${controller.receivedPacketCount}'),
+          Text('Validated repeater observations: ${controller.validatedRepeaterCount}'),
           Text('Saved observations: ${controller.receptions.length}'),
           if (controller.receptions.isNotEmpty)
             OutlinedButton.icon(
