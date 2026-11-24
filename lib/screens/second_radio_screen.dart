@@ -1,5 +1,12 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:convert';
+import 'package:geolocator/geolocator.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:share_plus/share_plus.dart';
+import '../providers/app_state_provider.dart';
+import '../services/meshcore/packet_metadata.dart';
 
 import 'package:flutter/material.dart';
 import '../models/connection_state.dart';
@@ -21,6 +28,62 @@ class SecondRadioController extends ChangeNotifier {
   StreamSubscription<({Uint8List raw, double snr, int rssi})>? _rxSub;
   final List<SecondRadioReception> receptions = [];
   int receivedPacketCount = 0;
+  Position? _lastGps;
+  AppStateProvider? _gpsProvider;
+  Timer? _saveTimer;
+  bool _loaded = false;
+  static const _storageKey = 'dualmesh_second_radio_observations_v1';
+
+  void bindGps(AppStateProvider provider) {
+    if (identical(provider, _gpsProvider)) return;
+    _gpsProvider?.removeListener(_updateGps);
+    _gpsProvider = provider;
+    _updateGps();
+    provider.addListener(_updateGps);
+    if (!_loaded) {
+      _loaded = true;
+      _restore();
+    }
+  }
+
+  void _updateGps() {
+    _lastGps = _gpsProvider?.currentPosition;
+  }
+
+  Future<void> _restore() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList(_storageKey) ?? <String>[];
+    final existing = receptions.map((e) => e.receivedAt.toIso8601String()).toSet();
+    for (final value in saved) {
+      try {
+        final item = SecondRadioReception.fromJson(jsonDecode(value) as Map<String, dynamic>);
+        if (existing.add(item.receivedAt.toIso8601String())) receptions.add(item);
+      } catch (_) { /* Ignore malformed historic records. */ }
+    }
+    receptions.sort((a, b) => b.receivedAt.compareTo(a.receivedAt));
+    if (receptions.length > 500) receptions.removeRange(500, receptions.length);
+    notifyListeners();
+  }
+
+  void _scheduleSave() {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(seconds: 2), () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setStringList(_storageKey,
+          receptions.take(500).map((e) => jsonEncode(e.toJson())).toList());
+    });
+  }
+
+  Future<void> exportCsv() async {
+    const header = 'timestamp_utc,receiver_key,radio_config,latitude,longitude,gps_accuracy_m,rssi_dbm,snr_db,packet_type,bytes';
+    final lines = receptions.map((e) => [
+      e.receivedAt.toIso8601String(), e.receiverPublicKey, e.frequencyConfig,
+      e.latitude?.toString() ?? '', e.longitude?.toString() ?? '',
+      e.gpsAccuracy?.toString() ?? '', e.rssi.toString(), e.snr.toString(),
+      e.packetType, e.rawBytes.length.toString(),
+    ].map((v) => '\"${v.replaceAll('\"', '\"\"')}\"').join(',')).toList();
+    await Share.share([header, ...lines].join('\\n'), subject: 'DualMesh USA/CA RX observations CSV');
+  }
   MeshCoreConnection? _mesh;
   final List<DiscoveredDevice> devices = [];
   String? error;
@@ -73,19 +136,30 @@ class SecondRadioController extends ChangeNotifier {
       await _rxSub?.cancel();
       _mesh?.dispose();
       _mesh = MeshCoreConnection(transport: _ble);
-      receptions.clear();
       receivedPacketCount = 0;
       _rxSub = _mesh!.logRxDataStream.listen((packet) {
         receivedPacketCount++;
+        final gps = _lastGps;
+        String type = 'unknown';
+        try {
+          final metadata = PacketMetadata.fromRawPacket(
+            raw: packet.raw, snr: packet.snr, rssi: packet.rssi);
+          type = '0x${metadata.header.toRadixString(16).padLeft(2, '0')}';
+        } catch (_) { /* Keep undecodable frames for diagnostics. */ }
         receptions.insert(0, SecondRadioReception(
           receivedAt: DateTime.now().toUtc(),
+          latitude: gps?.latitude,
+          longitude: gps?.longitude,
+          gpsAccuracy: gps?.accuracy,
+          packetType: type,
           receiverPublicKey: _mesh?.devicePublicKey ?? 'unknown',
           frequencyConfig: _mesh?.selfInfo?.radioConfigApi ?? 'unknown',
           snr: packet.snr,
           rssi: packet.rssi,
           rawBytes: Uint8List.fromList(packet.raw),
         ));
-        if (receptions.length > 100) receptions.removeLast();
+        if (receptions.length > 500) receptions.removeLast();
+        _scheduleSave();
         notifyListeners();
       });
       await _mesh!.connect((_) async => null);
@@ -127,6 +201,29 @@ class SecondRadioReception {
   final double snr;
   final int rssi;
   final Uint8List rawBytes;
+  final double? latitude;
+  final double? longitude;
+  final double? gpsAccuracy;
+  final String packetType;
+
+  Map<String, dynamic> toJson() => {
+    'time': receivedAt.toIso8601String(), 'key': receiverPublicKey,
+    'radio': frequencyConfig, 'snr': snr, 'rssi': rssi,
+    'raw': base64Encode(rawBytes), 'lat': latitude, 'lon': longitude,
+    'accuracy': gpsAccuracy, 'type': packetType,
+  };
+
+  factory SecondRadioReception.fromJson(Map<String, dynamic> data) => SecondRadioReception(
+    receivedAt: DateTime.parse(data['time'] as String),
+    receiverPublicKey: data['key'] as String,
+    frequencyConfig: data['radio'] as String,
+    snr: (data['snr'] as num).toDouble(), rssi: data['rssi'] as int,
+    rawBytes: base64Decode(data['raw'] as String),
+    latitude: (data['lat'] as num?)?.toDouble(),
+    longitude: (data['lon'] as num?)?.toDouble(),
+    gpsAccuracy: (data['accuracy'] as num?)?.toDouble(),
+    packetType: data['type'] as String? ?? 'unknown',
+  );
 
   SecondRadioReception({
     required this.receivedAt,
@@ -135,6 +232,10 @@ class SecondRadioReception {
     required this.snr,
     required this.rssi,
     required this.rawBytes,
+    this.latitude,
+    this.longitude,
+    this.gpsAccuracy,
+    this.packetType = 'unknown',
   });
 }
 
@@ -151,6 +252,9 @@ class _SecondRadioScreenState extends State<SecondRadioScreen> {
   void initState() {
     super.initState();
     controller.addListener(_refresh);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) controller.bindGps(context.read<AppStateProvider>());
+    });
   }
 
   @override
@@ -173,7 +277,8 @@ class _SecondRadioScreenState extends State<SecondRadioScreen> {
         children: [
           const Text(
             'Independent second Bluetooth connection. Raw RX diagnostics '
-            'are tracked by receiver; map and wardriving are not yet integrated.',
+            'are saved with available phone GPS fixes. Repeater mapping '
+            'and wardriving API uploads are not yet integrated.',
           ),
           const SizedBox(height: 16),
           Text('Status: ${controller.status.name}'),
@@ -187,6 +292,13 @@ class _SecondRadioScreenState extends State<SecondRadioScreen> {
             Text(controller.error!, style: const TextStyle(color: Colors.red)),
           const SizedBox(height: 16),
           Text('RX frames this connection: ${controller.receivedPacketCount}'),
+          Text('Saved observations: ${controller.receptions.length}'),
+          if (controller.receptions.isNotEmpty)
+            OutlinedButton.icon(
+              onPressed: controller.exportCsv,
+              icon: const Icon(Icons.share),
+              label: const Text('Export USA/CA observations CSV'),
+            ),
           for (final reception in controller.receptions.take(12))
             ListTile(
               dense: true,
@@ -194,7 +306,8 @@ class _SecondRadioScreenState extends State<SecondRadioScreen> {
               subtitle: Text(
                 '${reception.receivedAt.toLocal()} · '
                 '${reception.rawBytes.length} bytes · '
-                '${reception.frequencyConfig}',
+                '${reception.frequencyConfig} · ${reception.packetType}'
+                '${reception.latitude == null ? ' · no GPS' : ' · GPS ${reception.latitude!.toStringAsFixed(5)}, ${reception.longitude!.toStringAsFixed(5)}'}',
               ),
             ),
           const SizedBox(height: 16),
