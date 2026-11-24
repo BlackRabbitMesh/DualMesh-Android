@@ -19,7 +19,7 @@ import '../services/bluetooth/mobile_bluetooth.dart';
 import '../services/meshcore/connection.dart';
 
 /// A separate BLE companion, independent of MeshMapper's primary connection.
-/// This is a connection diagnostic, NOT a second mapping/wardriving pipeline.
+/// Secondary MeshCore receiver with independent validated passive RX mapping.
 class SecondRadioController extends ChangeNotifier {
   SecondRadioController._() {
     _statusSub = _ble.connectionStream.listen((_) => notifyListeners());
@@ -350,9 +350,9 @@ class _SecondRadioScreenState extends State<SecondRadioScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
-            'Independent second Bluetooth connection. Raw RX diagnostics '
-            'are saved with available phone GPS fixes. Repeater mapping '
-            'and wardriving API uploads are not yet integrated.',
+            'Independent second Bluetooth connection. Validated passive RX '
+            'observations enter the shared MeshMapper upload queue. '
+            'Online uploads require a valid authorized MeshMapper session.',
           ),
           const SizedBox(height: 16),
           Text('Status: ${controller.status.name}'),
