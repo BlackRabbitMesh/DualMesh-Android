@@ -663,6 +663,9 @@ class ApiQueueService {
     double? altitude,
     String? altitudeRef,
     double? altitudeAccuracy,
+    // Explicit source frequency for independent secondary receiver uploads.
+    // Never use the primary radio's getter for second-radio observations.
+    String? sourceRadioFreq,
   }) async {
     final item = ApiQueueItem.fromRx(
       latitude: latitude,
@@ -676,7 +679,7 @@ class ApiQueueService {
       altitudeRef: altitudeRef,
       altitudeAccuracy: altitudeAccuracy,
       autoMode: autoModeGetter?.call(),
-      radioFreq: radioConfigGetter?.call(),
+      radioFreq: sourceRadioFreq ?? radioConfigGetter?.call(),
     );
 
     // In offline mode, accumulate to offline pings list instead of queue
