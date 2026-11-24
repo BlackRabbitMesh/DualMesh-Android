@@ -12,6 +12,7 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:provider/provider.dart';
 
 import 'gps_info_chip.dart';
+import '../screens/second_radio_screen.dart';
 
 import '../models/log_entry.dart';
 import '../models/map_view_state.dart';
@@ -621,6 +622,52 @@ class MapWidget extends StatefulWidget {
 
 class _MapWidgetState extends State<MapWidget> with WidgetsBindingObserver {
   MapLibreMapController? _mapController;
+  final _secondRadio = SecondRadioController.instance;
+  final Map<String, Circle> _secondRadioCircles = {};
+  bool _secondRadioSyncing = false;
+  bool _secondRadioDirty = false;
+
+  void _onSecondRadioData() {
+    if (!_isMapReady || !mounted) return;
+    _syncSecondRadioMap();
+  }
+
+  Future<void> _syncSecondRadioMap() async {
+    if (_secondRadioSyncing) {
+      _secondRadioDirty = true;
+      return;
+    }
+    final controller = _mapController;
+    if (controller == null || !_isMapReady) return;
+    _secondRadioSyncing = true;
+    try {
+      final receptions = _secondRadio.receptions.where((r) =>
+          r.latitude != null && r.longitude != null &&
+          r.latitude!.abs() <= 90 && r.longitude!.abs() <= 180).take(100);
+      for (final reception in receptions) {
+        if (!mounted || _mapController != controller || !_isMapReady) break;
+        final key = reception.receivedAt.toIso8601String();
+        if (_secondRadioCircles.containsKey(key)) continue;
+        final circle = await controller.addCircle(CircleOptions(
+          geometry: LatLng(reception.latitude!, reception.longitude!),
+          circleRadius: 5,
+          circleColor: '#EAB308',
+          circleStrokeColor: '#111827',
+          circleStrokeWidth: 1,
+          circleOpacity: 0.8,
+        ));
+        _secondRadioCircles[key] = circle;
+      }
+    } catch (e) {
+      debugLog('[DUALMESH] Secondary map overlay deferred: $e');
+    } finally {
+      _secondRadioSyncing = false;
+      if (_secondRadioDirty) {
+        _secondRadioDirty = false;
+        if (mounted) _syncSecondRadioMap();
+      }
+    }
+  }
 
   // Tracks the app lifecycle so we can suppress every animateCamera() call
   // while the app is not in the foreground OR while the GL surface is
@@ -1086,6 +1133,7 @@ class _MapWidgetState extends State<MapWidget> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _secondRadio.addListener(_onSecondRadioData);
     _startupGateTimer = Timer(_startupGateTimeout, () {
       if (mounted && !_mapCreated) setState(() => _startupGateExpired = true);
     });
@@ -1266,6 +1314,8 @@ class _MapWidgetState extends State<MapWidget> with WidgetsBindingObserver {
     _styleLoadRunner.cancel();
     _regionBorderRunner.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    _secondRadio.removeListener(_onSecondRadioData);
+    _secondRadioCircles.clear();
     _patchProviderRef?.removeListener(_onCoveragePatchNotify);
     _patchProviderRef?.removeListener(_onPositionNotify);
     _patchProviderRef?.removeListener(_onCoverageOpacityNotify);
@@ -3435,6 +3485,10 @@ class _MapWidgetState extends State<MapWidget> with WidgetsBindingObserver {
     try {
       _styleLoaded = true;
       _isMapReady = true;
+      _secondRadioCircles.clear();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _syncSecondRadioMap();
+      });
 
       // Let the GL surface render one frame before allowing camera animations.
       // Without this, constrainCameraAndZoomToBounds can produce NaN on the
