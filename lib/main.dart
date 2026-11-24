@@ -52,7 +52,7 @@ void main() async {
 
   // Initialize debug logger (checks for ?debug=1 URL param on web)
   DebugLogger.initialize();
-  debugLog('[APP] MeshMapper starting...');
+  debugLog('[APP] DualMesh starting...');
 
   // Initialize Hive for local storage
   await Hive.initFlutter();
@@ -302,7 +302,7 @@ class _ThemedAppState extends State<_ThemedApp> {
         final isDarkMode = effectiveThemeMode == 'dark';
 
         return MaterialApp(
-          title: 'MeshMapper',
+          title: 'DualMesh',
           builder: (context, child) {
             return MediaQuery(
               data: MediaQuery.of(context).copyWith(

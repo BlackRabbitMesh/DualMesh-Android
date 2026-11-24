@@ -205,7 +205,7 @@ class _HomeScreenState extends State<HomeScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'MeshMapper',
+          'DualMesh',
           style: TextStyle(fontSize: 18),
         ),
         Text(
