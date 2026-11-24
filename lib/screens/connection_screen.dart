@@ -816,24 +816,24 @@ class _ConnectionScreenState extends State<ConnectionScreen>
         final connected = second.status == ConnectionStatus.connected;
         return Card(
           child: Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(children: [
                   Icon(Icons.bluetooth, color: connected ? Colors.green : Colors.grey),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(second.connectedName ?? 'Second radio · USA/CA',
-                    style: Theme.of(context).textTheme.titleMedium)),
+                  const SizedBox(width: 12),
+                  Expanded(child: Text(second.connectedName ?? 'Second radio',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w600))),
                   Text(connected ? 'Connected' : second.connecting ? 'Connecting' : 'Disconnected',
                     style: TextStyle(color: connected ? Colors.green : null)),
                 ]),
                 const SizedBox(height: 8),
                 if (second.radioConfig != null)
-                  Text('Radio: ${second.radioConfig}'),
+                  Text('Radio: ${second.radioConfig!.split(',').join(' · ')}'),
                 if (second.publicKey != null)
-                  SelectableText('Public key: ${second.publicKey}'),
-                Text('RX frames: ${second.receivedPacketCount} · Saved: ${second.receptions.length}'),
+                  Text('Public key: ${second.publicKey!.length > 18 ? '${second.publicKey!.substring(0, 8)}…${second.publicKey!.substring(second.publicKey!.length - 8)}' : second.publicKey}'),
+                Text('RX frames: ${second.receivedPacketCount} · Validated: ${second.validatedRepeaterCount} · Saved: ${second.receptions.length}'),
                 if (second.error != null)
                   Text(second.error!, style: const TextStyle(color: Colors.red)),
                 const SizedBox(height: 8),
